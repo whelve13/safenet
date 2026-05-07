@@ -3,18 +3,15 @@ import sys
 import os
 from datetime import datetime
 
-# Add src to path to allow absolute imports if run directly
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from src.models.message import Message
 
 class ChatParser:
-    """
-    Parses raw chat logs into structured Message objects.
-    """
+    # parses raw chat logs into structured Message objects
     def __init__(self):
-        # Sample format: [2023-10-27 14:30:00] UserA -> UserB: You are stupid!
-        # Or broadcast: [2023-10-27 14:31:00] UserA: Hello everyone
+        # sample format - [2023-10-27 14:30:00] UserA -> UserB: You are stupid!
+        # or broadcast - [2023-10-27 14:31:00] UserA: Hello everyone
         self.txt_pattern = re.compile(
             r'\[(.*?)\]\s+([\w\s]+?)(?:\s*->\s*([\w\s]+?))?:\s*(.*)'
         )
@@ -32,7 +29,7 @@ class ChatParser:
                 try:
                     timestamp = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
                 except ValueError:
-                    timestamp = datetime.now() # Fallback if parsing fails
+                    timestamp = datetime.now() # fallback if parsing fails
                     
                 message = Message(
                     id=f"MSG-TXT-{i}",
