@@ -1,7 +1,7 @@
 import os
 import sys
 
-# Ensure src is in the path
+# we ensure src is in the path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), 'src')))
 
 from src.parser.file_loader import FileLoader
@@ -15,14 +15,14 @@ from src.reports.report_generator import ReportGenerator
 def process_log_file(filepath: str, db_path: str = "safenet.db", config: AnalysisConfig | None = None):
     """
     Orchestrates the entire SafeNet pipeline:
-    1. Loads data
-    2. Parses into Messages
-    3. Runs through Risk Engine (DSA components)
-    4. Saves results to SQLite
+    1. loads data
+    2. parses into Messages
+    3. runs through Risk Engine
+    4. saves results to SQLite
     """
     config = config or AnalysisConfig()
 
-    print(f"--- Starting SafeNet Processing Pipeline ---")
+    print(f"> Starting SafeNet Processing Pipeline")
     print(f"Loading file: {filepath}")
     print(f"Config: threshold={config.toxicity_threshold}, window={config.escalation_window_size}")
 
@@ -47,26 +47,26 @@ def process_log_file(filepath: str, db_path: str = "safenet.db", config: Analysi
     repo = DatabaseRepository(db_path)
     repo.clear_all_data()
 
-    # Save all analyzed messages
+    # save all analyzed messages
     for msg in messages:
         repo.save_message(msg)
 
-    # Save all updated users (from our Custom HashMap)
+    # save all updated users (from our Custom HashMap)
     for user in engine.users.values():
         repo.save_user(user)
 
-    # Save all generated alerts
+    # save all generated alerts
     for alert in engine.alerts:
         repo.save_alert(alert)
 
     print(f"Data successfully saved to {db_path}.")
 
-    # Generate automatic reports
+    # generate automatic reports
     report_gen = ReportGenerator(repo)
     report_gen.generate_alerts_csv()
     report_gen.generate_top_offenders_txt()
 
-    print("--- Pipeline Execution Finished ---")
+    print("> Pipeline Execution Finished")
     return len(messages), len(engine.alerts)
 
 
