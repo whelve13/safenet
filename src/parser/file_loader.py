@@ -2,9 +2,7 @@ import os
 import json
 
 class FileLoader:
-    """
-    Utility class for loading raw data from various file formats.
-    """
+    # ytility class for loading raw data from various file formats
     @staticmethod
     def load_txt(filepath: str) -> list[str]:
         if not os.path.exists(filepath):

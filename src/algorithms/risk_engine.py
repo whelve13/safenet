@@ -2,7 +2,6 @@ import sys
 import os
 from datetime import datetime
 
-# Add src to path to allow absolute imports if run directly
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from src.models.message import Message
@@ -19,13 +18,13 @@ class RiskEngine:
     def __init__(self, config: AnalysisConfig | None = None):
         self.config = config or AnalysisConfig()
 
-        # We use our custom HashMap to store users (user_id -> User)
+        # we use our custom HashMap to store users (user_id -> User)
         self.users: HashMap[str, User] = HashMap()
         self.graph = InteractionGraph()
         self.toxicity_analyzer = ToxicityAnalyzer(self.config)
         self.escalation_detector = EscalationDetector(self.config)
 
-        # Priority Queue to always have the highest-risk user at the top
+        # priority queue to always have the highest-risk user at the top
         self.high_risk_queue: PriorityQueue[User] = PriorityQueue()
         self.alerts: list[Alert] = []
 
@@ -33,29 +32,29 @@ class RiskEngine:
         if not self.users.contains(user_id):
             user = User(id=user_id, username=username)
             self.users.put(user_id, user)
-        return self.users.get(user_id)  # type: ignore
+        return self.users.get(user_id)
 
     def process_message(self, message: Message):
 
-        # 1. Analyze text toxicity
+        # analyze text toxicity
         score = self.toxicity_analyzer.analyze_message(message)
 
-        # 2. Update sender stats
+        # update sender stats
         sender = self.get_or_create_user(message.sender_id, message.sender_id)
         sender.increment_messages(message.is_flagged)
 
-        # 3. Handle directed messages (graph and escalation)
+        # handle directed messages (graph and escalation)
         if message.receiver_id:
             receiver = self.get_or_create_user(message.receiver_id, message.receiver_id)
 
-            # Update Graph
+            # update Graph
             self.graph.add_interaction(sender.id, receiver.id, score)
 
-            # Record victim if highly toxic
+            # record victim if highly toxic
             if message.is_flagged:
                 sender.add_victim(receiver.id)
 
-            # Check for temporal escalation
+            # check for temporal escalation
             is_escalating = self.escalation_detector.analyze_escalation(message)
             if is_escalating:
                 self._generate_alert(
@@ -66,7 +65,7 @@ class RiskEngine:
                     timestamp=message.timestamp
                 )
 
-            # Check for gang-up behavior (Graph analysis)
+            # check for gang-up behavior (Graph analysis)
             if message.is_flagged:
                 aggressors = self.graph.find_gang_up_behavior(
                     receiver.id, min_aggressors=self.config.min_gang_up_aggressors
@@ -80,7 +79,7 @@ class RiskEngine:
                         timestamp=message.timestamp
                     )
 
-        # 4. Immediate High-Toxicity Alert
+        # immediate alert for high toxicity
         if score >= 0.9:
             self._generate_alert(
                 target_id=sender.id,
@@ -90,21 +89,21 @@ class RiskEngine:
                 timestamp=message.timestamp
             )
 
-        # 5. Recompute and queue the sender's overall risk
+        # recompute and queue the senders overall risk
         self._recompute_user_risk(sender)
 
     def _recompute_user_risk(self, user: User):
 
-        # Base risk from toxicity ratio
+        # base risk from toxicity ratio
         ratio_risk = user.get_toxicity_ratio()
 
-        # Add risk based on number of distinct victims (Graph breadth)
+        # add risk based on number of distinct victims (Graph breadth)
         victim_multiplier = min(len(user.victims) * 0.2, 0.5)
 
         final_risk = min(ratio_risk + victim_multiplier, 1.0)
         user.update_risk_score(final_risk)
 
-        # Push to Max-Heap (Priority Queue) if risk is above a threshold
+        # push to Max-Heap (Priority Queue) if risk is above a threshold
         if final_risk > self.config.high_risk_floor:
             self.high_risk_queue.push(user, final_risk)
 
@@ -129,7 +128,7 @@ class RiskEngine:
                 top_users.append(user)
                 temp.append((user, priority))
 
-        # Restore queue
+        # restore queue
         for u, p in temp:
             self.high_risk_queue.push(u, p)
 

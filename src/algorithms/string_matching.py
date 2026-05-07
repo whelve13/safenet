@@ -1,8 +1,4 @@
 def compute_lps_array(pattern: str) -> list[int]:
-    """
-    Computes the Longest Proper Prefix which is also Suffix (LPS) array for the KMP algorithm.
-    Time Complexity: O(M) where M is the length of the pattern.
-    """
     length = 0
     lps = [0] * len(pattern)
     i = 1
@@ -21,12 +17,6 @@ def compute_lps_array(pattern: str) -> list[int]:
     return lps
 
 def kmp_search(text: str, pattern: str) -> list[int]:
-    """
-    Knuth-Morris-Pratt (KMP) string matching algorithm.
-    Finds all occurrences of a pattern in a text.
-    Returns a list of starting indices where the pattern is found.
-    Time Complexity: O(N + M) where N is text length and M is pattern length.
-    """
     if not pattern or not text:
         return []
 
