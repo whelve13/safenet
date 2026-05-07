@@ -2,7 +2,6 @@ import re
 import sys
 import os
 
-# Add src to path to allow absolute imports if run directly
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
 from src.models.message import Message
@@ -10,7 +9,7 @@ from src.models.config import AnalysisConfig
 from src.structures.trie import Trie
 from src.algorithms.string_matching import kmp_search
 
-# Default vocabulary built into the system
+# default vocabulary built into the system
 DEFAULT_TOXIC_WORDS: dict[str, float] = {
     "idiot": 0.5, "stupid": 0.4, "loser": 0.6,
     "ugly": 0.5, "die": 1.0, "kill": 1.0, "hate": 0.7,
@@ -34,10 +33,7 @@ DEFAULT_TOXIC_PHRASES: dict[str, float] = {
 
 
 class ToxicityAnalyzer:
-    """
-    Analyzes message content to determine toxicity using custom Data Structures and Algorithms.
-    Utilizes a Trie for fast exact word lookup and KMP for complex phrase matching.
-    """
+    # analyzes message content to determine toxicity
     def __init__(self, config: AnalysisConfig | None = None):
         self.config = config or AnalysisConfig()
         self.abusive_trie = Trie()
@@ -46,47 +42,42 @@ class ToxicityAnalyzer:
         self._load_vocabulary()
 
     def _load_vocabulary(self):
-        """Loads the built-in + user-defined toxic vocabulary."""
-        # Built-in words
+        # built-in words
         for word, weight in DEFAULT_TOXIC_WORDS.items():
             self.abusive_trie.insert(word, weight)
 
-        # User-defined custom words from config
+        # user-defined custom words from config
         for word, weight in self.config.custom_toxic_words.items():
             self.abusive_trie.insert(word.lower(), weight)
 
-        # Built-in phrases
+        # built-in phrases
         self.abusive_phrases = dict(DEFAULT_TOXIC_PHRASES)
 
-        # User-defined custom phrases from config
+        # user-defined custom phrases from config
         for phrase, weight in self.config.custom_toxic_phrases.items():
             self.abusive_phrases[phrase.lower()] = weight
 
     def analyze_message(self, message: Message) -> float:
-        """
-        Calculates the toxicity score of a given message.
-        Time Complexity: O(W * L + P * (N+M))
-        where W is number of words, L is max word length, P is number of phrases.
-        """
+        # calculates the toxicity score of a given message
         score = 0.0
         content = message.content.lower()
 
-        # 1. Word-level analysis using Trie
+        # word-level analysis using Trie
         words = re.findall(r'\b\w+\b', content)
         for word in words:
             found, weight = self.abusive_trie.search(word)
             if found:
                 score += weight
 
-        # 2. Phrase-level analysis using KMP String Matching
+        # phrase-level analysis using KMP String Matching
         for phrase, weight in self.abusive_phrases.items():
             matches = kmp_search(content, phrase)
             if matches:
                 score += weight * len(matches)
 
-        # Cap the score at 1.0 for a single message
+        # we cap the score at 1.0 for a single message
         final_score = min(score, 1.0)
 
-        # Update the message object using the configurable threshold
+        # update the message object using the configurable threshold
         message.update_toxicity(final_score, threshold=self.config.toxicity_threshold)
         return final_score
