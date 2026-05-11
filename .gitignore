@@ -1,6 +1,6 @@
 # irrelevant stuff we ignore
 
-*.txt
+data/
 safenet.db
 __pycache__/
 *.py[cod]
