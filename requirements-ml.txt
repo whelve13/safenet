@@ -1,0 +1,4 @@
+# Hugging Face dependencies for ML toxicity scoring
+transformers>=4.30.0
+torch>=2.0.0
+# Optional: accelerate>=0.21.0 for faster inference

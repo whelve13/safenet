@@ -315,9 +315,16 @@ if 'analysis_status' not in st.session_state:
     st.session_state.analysis_status = 'empty'  # 'empty', 'ready', 'complete'
 if 'current_file_name' not in st.session_state:
     st.session_state.current_file_name = None
+if 'last_scan_error' not in st.session_state:
+    st.session_state.last_scan_error = None
+if 'sample_mode' not in st.session_state:
+    st.session_state.sample_mode = False
+if 'sample_autorun_attempted' not in st.session_state:
+    st.session_state.sample_autorun_attempted = False
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 DB_PATH = os.path.join(ROOT_DIR, "safenet.db")
+SAMPLE_CHAT_PATH = os.path.join(ROOT_DIR, "data", "sample.txt")
 
 def format_timestamp(ts_str):
     if not ts_str:
@@ -338,29 +345,41 @@ def format_timestamp(ts_str):
 def get_repo() -> DatabaseRepository:
     return DatabaseRepository(DB_PATH)
 
-def build_config_from_session() -> AnalysisConfig:
-    # reads the current settings from session_state and builds a config
-    custom_words = {}
-    raw_words = st.session_state.get("cfg_custom_words", "")
-    for line in raw_words.strip().split("\n"):
+def parse_weighted_lines(raw_input: str, default_weight: float, field_name: str) -> dict[str, float]:
+    parsed: dict[str, float] = {}
+    for line_number, line in enumerate(raw_input.strip().split("\n"), start=1):
         line = line.strip()
         if not line:
             continue
-        parts = line.split(",")
-        word = parts[0].strip().lower()
-        weight = float(parts[1].strip()) if len(parts) > 1 else 0.7
-        custom_words[word] = weight
 
-    custom_phrases = {}
-    raw_phrases = st.session_state.get("cfg_custom_phrases", "")
-    for line in raw_phrases.strip().split("\n"):
-        line = line.strip()
-        if not line:
-            continue
         parts = line.split(",")
         phrase = parts[0].strip().lower()
-        weight = float(parts[1].strip()) if len(parts) > 1 else 0.9
-        custom_phrases[phrase] = weight
+        if not phrase:
+            continue
+
+        if len(parts) > 1:
+            try:
+                weight = float(parts[1].strip())
+            except ValueError as exc:
+                raise ValueError(f"Invalid weight in {field_name} line {line_number}: '{line}'") from exc
+        else:
+            weight = default_weight
+
+        parsed[phrase] = weight
+    return parsed
+
+def build_config_from_session() -> AnalysisConfig:
+    # reads the current settings from session_state and builds a config
+    custom_words = parse_weighted_lines(
+        st.session_state.get("cfg_custom_words", ""),
+        default_weight=0.7,
+        field_name="Custom Keywords",
+    )
+    custom_phrases = parse_weighted_lines(
+        st.session_state.get("cfg_custom_phrases", ""),
+        default_weight=0.9,
+        field_name="Custom Phrases",
+    )
 
     return AnalysisConfig(
         toxicity_threshold=st.session_state.get("cfg_threshold", 0.7),
@@ -370,6 +389,11 @@ def build_config_from_session() -> AnalysisConfig:
         high_risk_floor=st.session_state.get("cfg_risk_floor", 0.3),
         custom_toxic_words=custom_words,
         custom_toxic_phrases=custom_phrases,
+        use_hf_model=st.session_state.get("cfg_use_hf", True),
+        hf_fallback_threshold=st.session_state.get("cfg_hf_threshold", 0.8),
+        hf_batch_size=st.session_state.get("cfg_hf_batch_size", 16),
+        hf_max_length=st.session_state.get("cfg_hf_max_length", 128),
+        hf_device=st.session_state.get("cfg_hf_device", -1),
     )
 
 def run_pipeline(file_bytes: bytes, filename: str, repo: DatabaseRepository, config: AnalysisConfig):
@@ -391,8 +415,7 @@ def run_pipeline(file_bytes: bytes, filename: str, repo: DatabaseRepository, con
             messages = parser.parse_txt_lines(raw)
 
         engine = RiskEngine(config)
-        for msg in messages:
-            engine.process_message(msg)
+        engine.process_messages_batch(messages)
 
         repo.clear_all_data()
         for msg in messages:
@@ -406,6 +429,34 @@ def run_pipeline(file_bytes: bytes, filename: str, repo: DatabaseRepository, con
     finally:
         os.unlink(tmp.name)
 
+def execute_scan(repo: DatabaseRepository, file_bytes: bytes, filename: str):
+    config = build_config_from_session()
+    with st.spinner("Analyzing conversation..."):
+        run_pipeline(file_bytes, filename, repo, config)
+
+    st.session_state.analysis_status = 'complete'
+    st.session_state.current_file_name = filename
+    st.session_state.last_scan_error = None
+    if 'pdf_ready' in st.session_state:
+        del st.session_state['pdf_ready']
+    st.rerun()
+
+def maybe_autorun_sample(repo: DatabaseRepository):
+    if st.session_state.sample_autorun_attempted:
+        return
+
+    st.session_state.sample_autorun_attempted = True
+    if st.session_state.analysis_status != 'empty' or repo.has_data() or not os.path.exists(SAMPLE_CHAT_PATH):
+        return
+
+    try:
+        with open(SAMPLE_CHAT_PATH, 'rb') as sample_file:
+            st.session_state.sample_mode = True
+            execute_scan(repo, sample_file.read(), os.path.basename(SAMPLE_CHAT_PATH))
+    except Exception as exc:
+        st.session_state.sample_mode = False
+        st.session_state.last_scan_error = f"Automatic sample scan failed: {exc}"
+
 def load_dataframes(repo: DatabaseRepository):
     # loads core dataframes from SQLite
     conn = sqlite3.connect(repo.db_path, check_same_thread=False)
@@ -417,6 +468,7 @@ def load_dataframes(repo: DatabaseRepository):
 
 # ── Initialize ──────────────────────────────────────────────────────────────
 repo = get_repo()
+maybe_autorun_sample(repo)
 
 # ── Sidebar ─────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -438,37 +490,41 @@ with st.sidebar:
 
     # state management logic based on upload
     if uploaded_file is None:
-        if st.session_state.analysis_status != 'empty':
+        if st.session_state.analysis_status == 'ready':
             st.session_state.analysis_status = 'empty'
             st.session_state.current_file_name = None
+            st.session_state.sample_mode = False
             repo.clear_all_data()
     else:
         if uploaded_file.name != st.session_state.current_file_name:
             st.session_state.current_file_name = uploaded_file.name
             st.session_state.analysis_status = 'ready'
+            st.session_state.sample_mode = False
+            st.session_state.last_scan_error = None
             repo.clear_all_data()
 
     st.markdown("<div style='margin-bottom: 24px;'></div>", unsafe_allow_html=True)
 
     # actions section
     if st.session_state.analysis_status == 'ready':
-        if st.button("Run scan", use_container_width=True, type="primary"):
-            config = build_config_from_session()
-            with st.spinner("Analyzing conversation..."):
-                run_pipeline(uploaded_file.getvalue(), uploaded_file.name, repo, config)
-            st.session_state.analysis_status = 'complete'
-            if 'pdf_ready' in st.session_state:
-                del st.session_state['pdf_ready']
-            st.rerun()
+        if uploaded_file is not None and st.button("Run scan", use_container_width=True, type="primary"):
+            try:
+                execute_scan(repo, uploaded_file.getvalue(), uploaded_file.name)
+            except Exception as exc:
+                st.session_state.last_scan_error = f"Scan failed for {uploaded_file.name}: {exc}"
     elif st.session_state.analysis_status == 'complete':
-        if st.button("Run scan", use_container_width=True):
-            config = build_config_from_session()
-            with st.spinner("Analyzing conversation..."):
-                repo.clear_all_data()
-                run_pipeline(uploaded_file.getvalue(), uploaded_file.name, repo, config)
-            if 'pdf_ready' in st.session_state:
-                del st.session_state['pdf_ready']
-            st.rerun()
+        has_scan_source = uploaded_file is not None or (st.session_state.sample_mode and os.path.exists(SAMPLE_CHAT_PATH))
+        rerun_label = "Run sample scan" if st.session_state.sample_mode else "Run scan"
+        if has_scan_source and st.button(rerun_label, use_container_width=True):
+            try:
+                if uploaded_file is not None:
+                    execute_scan(repo, uploaded_file.getvalue(), uploaded_file.name)
+                elif st.session_state.sample_mode and os.path.exists(SAMPLE_CHAT_PATH):
+                    with open(SAMPLE_CHAT_PATH, 'rb') as sample_file:
+                        execute_scan(repo, sample_file.read(), os.path.basename(SAMPLE_CHAT_PATH))
+            except Exception as exc:
+                source_name = uploaded_file.name if uploaded_file is not None else os.path.basename(SAMPLE_CHAT_PATH)
+                st.session_state.last_scan_error = f"Scan failed for {source_name}: {exc}"
 
     st.markdown("<div style='margin-bottom: 24px;'></div>", unsafe_allow_html=True)
 
@@ -511,6 +567,44 @@ with st.sidebar:
             help="One per line: `word, weight`.",
             height=80,
         )
+        st.text_area(
+            "Custom Phrases",
+            placeholder="go away, 0.8",
+            key="cfg_custom_phrases",
+            help="One per line: `phrase, weight`.",
+            height=80,
+        )
+        st.markdown("**Hugging Face Settings**")
+        st.checkbox(
+            "Enable Hugging Face fallback",
+            value=True,
+            key="cfg_use_hf",
+            help="Use the HF model when dictionary confidence is low.",
+        )
+        st.slider(
+            "HF fallback threshold",
+            min_value=0.0, max_value=1.0, value=0.8, step=0.05,
+            key="cfg_hf_threshold",
+            help="Run HF when dictionary score is below this value.",
+        )
+        st.slider(
+            "HF batch size",
+            min_value=1, max_value=64, value=16, step=1,
+            key="cfg_hf_batch_size",
+            help="Number of messages sent per HF inference call.",
+        )
+        st.slider(
+            "HF max token length",
+            min_value=32, max_value=512, value=128, step=16,
+            key="cfg_hf_max_length",
+            help="Maximum token length used by the HF model.",
+        )
+        st.number_input(
+            "HF device (-1 CPU, 0+ GPU)",
+            min_value=-1, max_value=8, value=-1, step=1,
+            key="cfg_hf_device",
+            help="Set -1 for CPU or a CUDA device index for GPU.",
+        )
         st.caption("Adjustments apply on the next scan.")
 
     # footer section
@@ -523,6 +617,8 @@ with st.sidebar:
 
 
 # ── Main Content ────────────────────────────────────────────────────────────
+if st.session_state.last_scan_error:
+    st.error(st.session_state.last_scan_error)
 
 if st.session_state.analysis_status == 'empty':
     # Empty State
@@ -575,11 +671,22 @@ users_df, alerts_df, messages_df = load_dataframes(repo)
 stats = repo.get_summary_stats()
 
 # ── Focal Anchor ────────────────────────────────────────────────────────────
+from src.algorithms.hf_toxicity_model import ML_AVAILABLE
+hf_enabled = st.session_state.get("cfg_use_hf", True)
+mode_text = "Hybrid (Hugging Face + Dictionary)" if hf_enabled and ML_AVAILABLE else "Dictionary Only"
+ml_status = "Available & Loaded" if ML_AVAILABLE else "Unavailable (Missing Dependencies)"
+
+if st.session_state.sample_mode:
+    st.info("Loaded bundled sample conversation automatically. Upload your own file in the sidebar to replace it.")
+
 st.markdown(f"""
 <div class="focal-card">
     <div>
         <h3 class="text-primary" style="margin: 0 0 4px 0; font-size: 16px;">Analysis Complete</h3>
         <p class="text-secondary" style="margin: 0; font-size: 14px;">The conversation from <strong>{st.session_state.current_file_name}</strong> has been successfully processed.</p>
+        <p style="margin: 6px 0 0 0; font-size: 13px; color: #64748b;">
+            Detection Mode: <strong style="color: #3b82f6;">{mode_text}</strong> • ML Engine: <strong>{ml_status}</strong>
+        </p>
     </div>
     <div style="background-color: #dbeafe; padding: 6px 12px; border-radius: 9999px;">
         <span style="color: #1e3a8a; font-size: 12px; font-weight: 600;">{stats['total_messages']:,} messages processed</span>
@@ -823,9 +930,26 @@ with tab_users:
                 user_flagged = messages_df[(messages_df['sender_id'] == row['id']) & (messages_df['is_flagged'] == 1)]
                 if not user_flagged.empty:
                     st.markdown("**Concerning messages sent:**")
+                    import json
                     for _, msg in user_flagged.iterrows():
                         target = f" targeting {msg['receiver_id']}" if msg['receiver_id'] else ""
-                        st.markdown(f"- `{msg['timestamp']}`{target}: *\"{msg['content']}\"* (score: {msg['toxicity_score']:.2f})")
+                        
+                        # Parse metadata for score breakdown
+                        meta_text = ""
+                        if 'metadata' in msg and pd.notna(msg['metadata']):
+                            try:
+                                meta = json.loads(msg['metadata'])
+                                method = meta.get('scoring_method', 'unknown')
+                                if method == "huggingface":
+                                    meta_text = f" [via HF Model: {meta.get('hf_score', 0):.2f}]"
+                                elif method == "dictionary":
+                                    meta_text = f" [via Dictionary: {meta.get('dict_score', 0):.2f}]"
+                                else:
+                                    meta_text = f" [via {method}]"
+                            except Exception:
+                                pass
+                                
+                        st.markdown(f"- `{msg['timestamp']}`{target}: *\"{msg['content']}\"* (score: **{msg['toxicity_score']:.2f}**){meta_text}")
 
 
 # VICTIMS TAB
@@ -851,8 +975,22 @@ with tab_victims:
                 targeted_msgs = repo.get_messages_targeting_user(victim_id)
                 if targeted_msgs:
                     st.markdown("**Messages received:**")
+                    import json
                     for tm in targeted_msgs:
-                        st.markdown(f"- `{tm[0][:19]}` **{tm[1]}**: *\"{tm[2]}\"* (score: {tm[3]:.2f})")
+                        meta_text = ""
+                        if len(tm) > 4 and tm[4]:
+                            try:
+                                meta = json.loads(tm[4])
+                                method = meta.get('scoring_method', 'unknown')
+                                if method == "huggingface":
+                                    meta_text = f" [via HF Model: {meta.get('hf_score', 0):.2f}]"
+                                elif method == "dictionary":
+                                    meta_text = f" [via Dictionary: {meta.get('dict_score', 0):.2f}]"
+                                else:
+                                    meta_text = f" [via {method}]"
+                            except Exception:
+                                pass
+                        st.markdown(f"- `{tm[0][:19]}` **{tm[1]}**: *\"{tm[2]}\"* (score: {tm[3]:.2f}){meta_text}")
     else:
         st.success("No targeted individuals identified.")
 

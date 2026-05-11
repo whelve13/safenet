@@ -28,7 +28,15 @@ class DatabaseRepository:
             cursor = conn.cursor()
             for schema in get_all_schemas():
                 cursor.execute(schema)
+            self._run_migrations(cursor)
             conn.commit()
+
+    def _run_migrations(self, cursor: sqlite3.Cursor):
+        # keep existing databases compatible when new columns are introduced
+        cursor.execute("PRAGMA table_info(messages)")
+        message_columns = {row[1] for row in cursor.fetchall()}
+        if "metadata" not in message_columns:
+            cursor.execute("ALTER TABLE messages ADD COLUMN metadata TEXT")
 
     def clear_all_data(self):
         # wipes all tables for a fresh analysis run
@@ -52,13 +60,15 @@ class DatabaseRepository:
 
     def save_message(self, message: Message):
         with self._get_connection() as conn:
+            import json
             cursor = conn.cursor()
+            metadata_str = json.dumps(getattr(message, "scoring_metadata", {}))
             cursor.execute("""
-                INSERT OR IGNORE INTO messages (id, timestamp, sender_id, receiver_id, content, toxicity_score, is_flagged)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT OR IGNORE INTO messages (id, timestamp, sender_id, receiver_id, content, toxicity_score, is_flagged, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 message.id, message.timestamp.isoformat(), message.sender_id,
-                message.receiver_id, message.content, message.toxicity_score, message.is_flagged
+                message.receiver_id, message.content, message.toxicity_score, message.is_flagged, metadata_str
             ))
             conn.commit()
 
@@ -157,7 +167,7 @@ class DatabaseRepository:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT m.timestamp, m.sender_id, m.content, m.toxicity_score
+                SELECT m.timestamp, m.sender_id, m.content, m.toxicity_score, m.metadata
                 FROM messages m
                 WHERE m.receiver_id = ? AND m.is_flagged = 1
                 ORDER BY m.timestamp ASC

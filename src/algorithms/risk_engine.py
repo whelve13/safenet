@@ -34,10 +34,12 @@ class RiskEngine:
             self.users.put(user_id, user)
         return self.users.get(user_id)
 
-    def process_message(self, message: Message):
-
-        # analyze text toxicity
-        score = self.toxicity_analyzer.analyze_message(message)
+    def process_message(self, message: Message, pre_scored: bool = False):
+        # analyze text toxicity if not pre-scored
+        if not pre_scored:
+            score, _ = self.toxicity_analyzer.analyze_message(message)
+        else:
+            score = message.toxicity_score
 
         # update sender stats
         sender = self.get_or_create_user(message.sender_id, message.sender_id)
@@ -91,6 +93,14 @@ class RiskEngine:
 
         # recompute and queue the senders overall risk
         self._recompute_user_risk(sender)
+
+    def process_messages_batch(self, messages: list[Message]):
+        # Batch score all messages first
+        self.toxicity_analyzer.analyze_messages_batch(messages)
+        
+        # Then process them sequentially for temporal/graph logic
+        for msg in messages:
+            self.process_message(msg, pre_scored=True)
 
     def _recompute_user_risk(self, user: User):
 

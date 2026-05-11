@@ -39,9 +39,8 @@ def process_log_file(filepath: str, db_path: str = "safenet.db", config: Analysi
     print(f"Parsed {len(messages)} messages successfully.")
 
     engine = RiskEngine(config)
-    print("Analyzing messages through Risk Engine...")
-    for msg in messages:
-        engine.process_message(msg)
+    print("Analyzing messages through Risk Engine (Batch Mode)...")
+    engine.process_messages_batch(messages)
 
     print("Analysis complete. Persisting data to SQLite...")
     repo = DatabaseRepository(db_path)

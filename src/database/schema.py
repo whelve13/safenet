@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS messages (
     content TEXT NOT NULL,
     toxicity_score REAL DEFAULT 0.0,
     is_flagged BOOLEAN DEFAULT 0,
+    metadata TEXT,
     FOREIGN KEY(sender_id) REFERENCES users(id)
 );
 """

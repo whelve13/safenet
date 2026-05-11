@@ -5,3 +5,7 @@ safenet.db
 __pycache__/
 *.py[cod]
 *$py.class
+.venv/
+.streamlit/
+*.csv
+top_offenders.txt

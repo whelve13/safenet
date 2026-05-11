@@ -21,3 +21,15 @@ class AnalysisConfig:
 
     # Additional toxic phrases added by the user (phrase -> weight)
     custom_toxic_phrases: dict[str, float] = field(default_factory=dict)
+
+    # --- Machine Learning Extensions ---
+    use_hf_model: bool = True
+    hf_model_name: str = "unitary/toxic-bert"
+    hf_fallback_threshold: float = 0.8  # Use HF if dict score < this threshold
+    hf_inference_mode: str = "local"  # 'local' or 'api'
+    hf_batch_size: int = 16
+    hf_max_length: int = 128
+    hf_device: int = -1  # -1 for CPU, 0+ for GPU
+    hf_context_guard_enabled: bool = True
+    hf_context_guard_min_hf_score: float = 0.8
+    hf_positive_idiom_cap: float = 0.35
