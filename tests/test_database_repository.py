@@ -10,6 +10,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from src.database.repository import DatabaseRepository
 from src.models.message import Message
+from src.models.moderation_event import ModerationEvent
 
 
 class TestDatabaseRepositoryMigrations(unittest.TestCase):
@@ -66,6 +67,42 @@ class TestDatabaseRepositoryMigrations(unittest.TestCase):
                 "SELECT metadata FROM messages WHERE id = ?", (message.id,)
             ).fetchone()[0]
             self.assertIn("scoring_method", metadata)
+
+    def test_save_and_read_moderation_event(self):
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp_db:
+            db_path = tmp_db.name
+
+        def cleanup_db():
+            for _ in range(10):
+                try:
+                    if os.path.exists(db_path):
+                        os.remove(db_path)
+                    return
+                except PermissionError:
+                    time.sleep(0.1)
+
+        self.addCleanup(cleanup_db)
+
+        repo = DatabaseRepository(db_path)
+        event = ModerationEvent(
+            id="EVT-1",
+            timestamp=datetime.now(),
+            source="extension",
+            page_url="https://example.com/chat",
+            page_domain="example.com",
+            snippet="you are worthless",
+            toxicity_score=0.91,
+            severity="critical",
+            decision="block",
+            detection_method="hybrid",
+            explanation="Toxic-BERT fallback increased confidence because dictionary score was below threshold.",
+        )
+        repo.save_moderation_event(event)
+
+        rows = repo.get_moderation_events(limit=5)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][2], "extension")
+        self.assertEqual(rows[0][8], "block")
 
 
 if __name__ == "__main__":

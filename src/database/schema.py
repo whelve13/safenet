@@ -36,5 +36,26 @@ CREATE TABLE IF NOT EXISTS alerts (
 );
 """
 
+CREATE_MODERATION_EVENTS_TABLE = """
+CREATE TABLE IF NOT EXISTS moderation_events (
+    id TEXT PRIMARY KEY,
+    timestamp TEXT NOT NULL,
+    source TEXT NOT NULL,
+    page_url TEXT,
+    page_domain TEXT,
+    snippet TEXT NOT NULL,
+    toxicity_score REAL NOT NULL,
+    severity TEXT NOT NULL,
+    decision TEXT NOT NULL,
+    detection_method TEXT NOT NULL,
+    explanation TEXT
+);
+"""
+
 def get_all_schemas() -> list[str]:
-    return [CREATE_USERS_TABLE, CREATE_MESSAGES_TABLE, CREATE_ALERTS_TABLE]
+    return [
+        CREATE_USERS_TABLE,
+        CREATE_MESSAGES_TABLE,
+        CREATE_ALERTS_TABLE,
+        CREATE_MODERATION_EVENTS_TABLE,
+    ]

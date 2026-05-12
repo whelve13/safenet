@@ -4,6 +4,7 @@ import io
 import sys
 import os
 from typing import Optional
+import json
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
@@ -11,6 +12,7 @@ from src.database.schema import get_all_schemas
 from src.models.user import User
 from src.models.message import Message
 from src.models.alert import Alert, AlertSeverity
+from src.models.moderation_event import ModerationEvent
 from datetime import datetime
 
 
@@ -60,7 +62,6 @@ class DatabaseRepository:
 
     def save_message(self, message: Message):
         with self._get_connection() as conn:
-            import json
             cursor = conn.cursor()
             metadata_str = json.dumps(getattr(message, "scoring_metadata", {}))
             cursor.execute("""
@@ -83,6 +84,31 @@ class DatabaseRepository:
                 alert.id, alert.timestamp.isoformat(), alert.target_user_id,
                 alert.severity.value, alert.reason, context_str
             ))
+            conn.commit()
+
+    def save_moderation_event(self, event: ModerationEvent):
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT OR REPLACE INTO moderation_events
+                (id, timestamp, source, page_url, page_domain, snippet, toxicity_score, severity, decision, detection_method, explanation)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event.id,
+                    event.timestamp.isoformat(),
+                    event.source,
+                    event.page_url,
+                    event.page_domain,
+                    event.snippet,
+                    event.toxicity_score,
+                    event.severity,
+                    event.decision,
+                    event.detection_method,
+                    event.explanation,
+                ),
+            )
             conn.commit()
 
     # ── Dashboard queries ───────────────────────────────────────────────────
@@ -214,3 +240,18 @@ class DatabaseRepository:
             cursor = conn.cursor()
             cursor.execute("SELECT COUNT(*) FROM messages")
             return cursor.fetchone()[0] > 0
+
+    def get_moderation_events(self, limit: int = 250) -> list[tuple]:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, timestamp, source, page_url, page_domain, snippet, toxicity_score,
+                       severity, decision, detection_method, explanation
+                FROM moderation_events
+                ORDER BY timestamp DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+            return cursor.fetchall()

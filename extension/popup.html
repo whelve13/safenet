@@ -1,0 +1,52 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>SafeNet</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="container">
+      <h1>SafeNet</h1>
+      <p class="subtitle">Live moderation controls</p>
+
+      <div class="row">
+        <label class="switch-label">
+          <input type="checkbox" id="enabledToggle" />
+          Enable scanning
+        </label>
+      </div>
+
+      <div class="row">
+        <label for="apiBaseUrl">API URL</label>
+        <input id="apiBaseUrl" type="text" />
+      </div>
+
+      <div class="row">
+        <label for="severityThreshold">Severity threshold</label>
+        <select id="severityThreshold">
+          <option value="low">low</option>
+          <option value="medium">medium</option>
+          <option value="high">high</option>
+          <option value="critical">critical</option>
+        </select>
+      </div>
+
+      <div class="row">
+        <label class="switch-label">
+          <input type="checkbox" id="clickToReveal" />
+          Enable click-to-reveal
+        </label>
+      </div>
+
+      <div class="row actions">
+        <button id="saveButton">Save</button>
+        <button id="healthButton" class="secondary">Check API</button>
+      </div>
+
+      <div id="status" class="status">Status: idle</div>
+    </div>
+    <script src="popup.js"></script>
+  </body>
+</html>
+

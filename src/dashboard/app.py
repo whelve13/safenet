@@ -3,7 +3,6 @@ import pandas as pd
 import sqlite3
 import sys
 import os
-import tempfile
 
 import matplotlib
 matplotlib.use("Agg")
@@ -15,12 +14,10 @@ from datetime import datetime
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 sys.path.insert(0, ROOT_DIR)
 
-from src.parser.file_loader import FileLoader
-from src.parser.chat_parser import ChatParser
 from src.models.config import AnalysisConfig
-from src.algorithms.risk_engine import RiskEngine
 from src.database.repository import DatabaseRepository
 from src.reports.report_generator import ReportGenerator
+from src.services.pipeline_service import process_uploaded_file_bytes
 
 # ── Page config ─────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -398,36 +395,7 @@ def build_config_from_session() -> AnalysisConfig:
 
 def run_pipeline(file_bytes: bytes, filename: str, repo: DatabaseRepository, config: AnalysisConfig):
     # runs the full SafeNet analysis pipeline on uploaded file bytes
-    loader = FileLoader()
-    parser = ChatParser()
-
-    suffix = os.path.splitext(filename)[1]
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix, mode='wb')
-    tmp.write(file_bytes)
-    tmp.close()
-
-    try:
-        if filename.endswith('.json'):
-            raw = loader.load_json(tmp.name)
-            messages = parser.parse_json_records(raw)
-        else:
-            raw = loader.load_txt(tmp.name)
-            messages = parser.parse_txt_lines(raw)
-
-        engine = RiskEngine(config)
-        engine.process_messages_batch(messages)
-
-        repo.clear_all_data()
-        for msg in messages:
-            repo.save_message(msg)
-        for user in engine.users.values():
-            repo.save_user(user)
-        for alert in engine.alerts:
-            repo.save_alert(alert)
-
-        return len(messages), len(engine.alerts)
-    finally:
-        os.unlink(tmp.name)
+    return process_uploaded_file_bytes(file_bytes, filename, repo, config)
 
 def execute_scan(repo: DatabaseRepository, file_bytes: bytes, filename: str):
     config = build_config_from_session()
@@ -465,6 +433,67 @@ def load_dataframes(repo: DatabaseRepository):
     messages_df = pd.read_sql_query("SELECT * FROM messages ORDER BY timestamp ASC", conn)
     conn.close()
     return users_df, alerts_df, messages_df
+
+
+def render_extension_audit_tab(repo: DatabaseRepository):
+    st.markdown("<h4 class='text-primary'>Live Moderation Audit</h4>", unsafe_allow_html=True)
+    st.markdown(
+        "<p class='text-secondary' style='font-size: 14px;'>Recorded API/extension moderation events from real detections.</p>",
+        unsafe_allow_html=True,
+    )
+
+    events = repo.get_moderation_events(limit=500)
+    if not events:
+        st.info("No extension/API moderation events have been recorded yet.")
+        return
+
+    events_df = pd.DataFrame(
+        events,
+        columns=[
+            "id",
+            "timestamp",
+            "source",
+            "page_url",
+            "page_domain",
+            "snippet",
+            "toxicity_score",
+            "severity",
+            "decision",
+            "detection_method",
+            "explanation",
+        ],
+    )
+
+    severity_filter = st.selectbox(
+        "Filter extension events by severity",
+        ["All", "low", "medium", "high", "critical"],
+        key="extension_audit_severity_filter",
+        label_visibility="collapsed",
+    )
+    filtered_df = events_df if severity_filter == "All" else events_df[events_df["severity"] == severity_filter]
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Recorded events", len(filtered_df))
+    m2.metric("Blur actions", int((filtered_df["decision"] == "blur").sum()))
+    m3.metric("Block actions", int((filtered_df["decision"] == "block").sum()))
+    m4.metric("Critical", int((filtered_df["severity"] == "critical").sum()))
+
+    view_df = filtered_df[
+        [
+            "timestamp",
+            "source",
+            "page_domain",
+            "page_url",
+            "snippet",
+            "toxicity_score",
+            "severity",
+            "decision",
+            "detection_method",
+            "explanation",
+        ]
+    ].copy()
+    view_df["toxicity_score"] = view_df["toxicity_score"].map(lambda x: f"{float(x):.2f}")
+    st.dataframe(view_df, use_container_width=True, height=420)
 
 # ── Initialize ──────────────────────────────────────────────────────────────
 repo = get_repo()
@@ -621,43 +650,49 @@ if st.session_state.last_scan_error:
     st.error(st.session_state.last_scan_error)
 
 if st.session_state.analysis_status == 'empty':
-    # Empty State
-    st.markdown("<div style='height: 10vh;'></div>", unsafe_allow_html=True)
-    _, center, _ = st.columns([1, 1.5, 1])
-    with center:
-        st.markdown(f"""
-        <div class="card-bg" style="padding: 32px; text-align: center; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.02);">
-            <div style="display: flex; justify-content: center; margin-bottom: 16px;">
-                <div style="border: 1px solid #e2e8f0; background-color: #ffffff; padding: 12px; border-radius: 50%;">
-                    {get_svg_icon('document', size=24, color='#64748b')}
+    tab_manual, tab_extension_audit = st.tabs(["Manual File Analysis", "Extension Audit"])
+    with tab_manual:
+        st.markdown("<div style='height: 10vh;'></div>", unsafe_allow_html=True)
+        _, center, _ = st.columns([1, 1.5, 1])
+        with center:
+            st.markdown(f"""
+            <div class="card-bg" style="padding: 32px; text-align: center; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.02);">
+                <div style="display: flex; justify-content: center; margin-bottom: 16px;">
+                    <div style="border: 1px solid #e2e8f0; background-color: #ffffff; padding: 12px; border-radius: 50%;">
+                        {get_svg_icon('document', size=24, color='#64748b')}
+                    </div>
                 </div>
+                <h3 class="text-primary" style="margin-bottom: 4px; font-size: 18px;">Upload a conversation to scan for harmful interactions and warning signs.</h3>
+                <p class="text-secondary" style="font-size: 13px; font-weight: 500; margin-top: 8px;">
+                    Supported formats: .txt, .json
+                </p>
             </div>
-            <h3 class="text-primary" style="margin-bottom: 4px; font-size: 18px;">Upload a conversation to scan for harmful interactions and warning signs.</h3>
-            <p class="text-secondary" style="font-size: 13px; font-weight: 500; margin-top: 8px;">
-                Supported formats: .txt, .json
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
+    with tab_extension_audit:
+        render_extension_audit_tab(repo)
     st.stop()
 
 if st.session_state.analysis_status == 'ready':
-    # Ready State
-    st.markdown("<div style='height: 10vh;'></div>", unsafe_allow_html=True)
-    _, center, _ = st.columns([1, 1.5, 1])
-    with center:
-        st.markdown(f"""
-        <div class="card-bg" style="padding: 32px; text-align: center; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.02);">
-            <div style="display: flex; justify-content: center; margin-bottom: 16px;">
-                <div style="border: 1px solid #bfdbfe; background-color: #eff6ff; padding: 12px; border-radius: 50%;">
-                    {get_svg_icon('shield', size=24, color='#3b82f6')}
+    tab_manual, tab_extension_audit = st.tabs(["Manual File Analysis", "Extension Audit"])
+    with tab_manual:
+        st.markdown("<div style='height: 10vh;'></div>", unsafe_allow_html=True)
+        _, center, _ = st.columns([1, 1.5, 1])
+        with center:
+            st.markdown(f"""
+            <div class="card-bg" style="padding: 32px; text-align: center; border-radius: 12px; box-shadow: 0 1px 2px rgba(0,0,0,0.02);">
+                <div style="display: flex; justify-content: center; margin-bottom: 16px;">
+                    <div style="border: 1px solid #bfdbfe; background-color: #eff6ff; padding: 12px; border-radius: 50%;">
+                        {get_svg_icon('shield', size=24, color='#3b82f6')}
+                    </div>
                 </div>
+                <h3 class="text-primary" style="margin-bottom: 4px; font-size: 18px;">File loaded successfully</h3>
+                <p class="text-secondary" style="font-size: 14px; margin-bottom: 0;">
+                    Click <strong>Run scan</strong> in the sidebar to begin the analysis.
+                </p>
             </div>
-            <h3 class="text-primary" style="margin-bottom: 4px; font-size: 18px;">File loaded successfully</h3>
-            <p class="text-secondary" style="font-size: 14px; margin-bottom: 0;">
-                Click <strong>Run scan</strong> in the sidebar to begin the analysis.
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
+    with tab_extension_audit:
+        render_extension_audit_tab(repo)
     st.stop()
 
 # Dashboard State
@@ -717,8 +752,15 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ── Tabs ────────────────────────────────────────────────────────────────────
-tab_overview, tab_alerts, tab_graph, tab_users, tab_victims, tab_reports, tab_data = st.tabs([
-    "Overview", "Warning Signs", "Interaction Network", "User Profiles", "Targeted Individuals", "Export Reports", "Raw Data"
+tab_overview, tab_alerts, tab_graph, tab_users, tab_victims, tab_reports, tab_data, tab_extension_audit = st.tabs([
+    "Overview",
+    "Warning Signs",
+    "Interaction Network",
+    "User Profiles",
+    "Targeted Individuals",
+    "Export Reports",
+    "Raw Data",
+    "Extension Audit",
 ])
 
 
@@ -1061,3 +1103,7 @@ with tab_data:
         st.dataframe(users_df, use_container_width=True, height=400)
     with dt3:
         st.dataframe(alerts_df, use_container_width=True, height=400)
+
+
+with tab_extension_audit:
+    render_extension_audit_tab(repo)

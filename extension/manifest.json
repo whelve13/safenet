@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "SafeNet Moderation Demo",
+  "version": "1.0.0",
+  "description": "Real-time toxicity moderation using SafeNet API.",
+  "permissions": ["storage", "activeTab", "scripting"],
+  "host_permissions": ["<all_urls>", "http://127.0.0.1/*", "http://localhost/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "SafeNet"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
+
