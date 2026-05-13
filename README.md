@@ -12,13 +12,16 @@ A Python-based tool for detecting and reporting online harassment and toxic beha
 ## Features
 
 - **Toxicity Detection** — Scores messages against a configurable risk threshold
-- **Hybrid Scoring Path** — Dictionary probing first, then `unitary/toxic-bert` fallback when dictionary confidence is below 0.8
+- **Configurable Scoring Mode** — Default `hybrid_model_priority` uses `final_score = max(hf_score, dictionary_score * 0.85)` with dictionary-first extraction and Toxic-BERT contextual validation
 - **Risk Engine** — Tracks escalation patterns across a sliding message window
 - **User Profiling** — Maintains per-user offense history using a custom HashMap structure
 - **Automated Alerting** — Generates alerts for flagged messages and escalation events
 - **Report Generation** — Exports a CSV of all alerts and a ranked top-offenders summary
 - **FastAPI Backend** — Exposes `/health`, `/model-info`, `/v1/analyze/text`, `/v1/analyze/batch`
+- **TreeWalker Content Scanning** — Extension scans visible text nodes (anchors, headings, snippets, comments), including dynamic pages
+- **Backend-Driven Inline Phrase Blur** — Dictionary matches from API are used to blur exact harmful terms/phrases inline (no local dictionary duplication)
 - **Extension Audit Log** — Persists real moderation events (`blur` / `block`) in `moderation_events`
+- **Audit Deduplication** — Avoids duplicate moderation events for the same domain + snippet + decision within a short window
 - **SQLite Persistence** — Stores messages, users, alerts, and extension/API moderation events
 - **Multi-format Input** — Accepts both `.json` and `.txt` chat log files
 
@@ -107,6 +110,12 @@ Available endpoints:
 - `POST /v1/analyze/text`
 - `POST /v1/analyze/batch`
 
+API response explanation includes dictionary and model details used by the extension:
+- `matched_terms`
+- `matched_phrases`
+- `matched_term_spans`
+- `matched_phrase_spans`
+
 Useful checks:
 - API docs: `http://127.0.0.1:8000/docs`
 - Health: `http://127.0.0.1:8000/health`
@@ -136,6 +145,20 @@ Useful checks:
    ```
 6. Open **Extension Audit** tab to view recorded moderation events.
 
+### 6) Clear Extension Audit events
+
+If you want to reset the Extension Audit tab, clear `moderation_events` from SQLite:
+
+```bash
+python -c "import sqlite3; c=sqlite3.connect('safenet.db'); c.execute('DELETE FROM moderation_events'); c.commit(); c.close(); print('Extension audit cleared.')"
+```
+
+Optional check:
+
+```bash
+python -c "import sqlite3; c=sqlite3.connect('safenet.db'); print(c.execute('SELECT COUNT(*) FROM moderation_events').fetchone()[0]); c.close()"
+```
+
 ---
 
 ## Output
@@ -159,6 +182,17 @@ from main import process_log_file
 config = AnalysisConfig(toxicity_threshold=0.7, escalation_window_size=10)
 process_log_file("data/chat.json", config=config)
 ```
+
+Scoring-related settings:
+- `scoring_mode="hybrid_model_priority"` (default)  
+  - dictionary scan always runs first (matches + dict score + severity signal)
+  - Toxic-BERT is used as the primary contextual validator when available
+  - final score rule: `max(hf_score, dict_score * hybrid_dictionary_weight)` where default weight is `0.85`
+- `scoring_mode="dictionary_first_fallback"` (legacy mode)  
+  - keeps the old dictionary-first fallback strategy using `hf_fallback_threshold`
+
+For API runs, you can also set:
+- `SAFENET_SCORING_MODE=hybrid_model_priority` (or `dictionary_first_fallback`)
 
 ---
 

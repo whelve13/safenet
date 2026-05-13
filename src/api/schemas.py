@@ -3,11 +3,31 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
 
 
+class MatchedTermSpan(BaseModel):
+    start: int
+    end: int
+    term: str
+
+
+class MatchedPhraseSpan(BaseModel):
+    start: int
+    end: int
+    phrase: str
+
+
 class DetectionExplanation(BaseModel):
     contributors: List[str]
+    scoring_mode: str
     scoring_method: str
     dict_score: float
+    dictionary_weighted_score: float
+    dictionary_severity_signal: Literal["low", "medium", "high", "critical"]
+    matched_terms: List[str]
+    matched_phrases: List[str]
+    matched_term_spans: List[MatchedTermSpan]
+    matched_phrase_spans: List[MatchedPhraseSpan]
     hf_score: Optional[float] = None
+    hf_adjusted_score: Optional[float] = None
     reason: str
 
 

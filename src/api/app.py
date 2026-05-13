@@ -10,10 +10,12 @@ from src.api.schemas import (
     AnalyzeTextResponse,
 )
 from src.database.repository import DatabaseRepository
+from src.models.config import AnalysisConfig
 from src.services.moderation_service import ModerationService
 
 
 DB_PATH = os.getenv("SAFENET_DB_PATH", "safenet.db")
+SCORING_MODE = os.getenv("SAFENET_SCORING_MODE", "hybrid_model_priority")
 
 app = FastAPI(title="SafeNet API", version="1.0.0")
 app.add_middleware(
@@ -25,7 +27,7 @@ app.add_middleware(
 )
 
 repo = DatabaseRepository(DB_PATH)
-moderation_service = ModerationService()
+moderation_service = ModerationService(AnalysisConfig(scoring_mode=SCORING_MODE))
 
 
 @app.get("/health")
@@ -43,6 +45,8 @@ def model_info() -> dict:
         "hf_model_name": hf_model.model_name,
         "hf_model_loaded": hf_model.is_loaded,
         "hf_load_error": hf_model.load_error,
+        "scoring_mode": analyzer.config.scoring_mode,
+        "hybrid_dictionary_weight": analyzer.config.hybrid_dictionary_weight,
         "hf_fallback_threshold": analyzer.config.hf_fallback_threshold,
     }
 
@@ -54,8 +58,7 @@ def analyze_text(payload: AnalyzeTextRequest) -> dict:
 
     if payload.persist_event_on_action and moderation_service.should_persist_event(result["decision"]):
         event = moderation_service.build_event(result, source=payload.source, page_url=payload.page_url)
-        repo.save_moderation_event(event)
-        persisted_event = True
+        persisted_event = repo.save_moderation_event(event, dedupe_window_seconds=30)
 
     result["persisted_event"] = persisted_event
     return result
@@ -71,8 +74,7 @@ def analyze_batch(payload: AnalyzeBatchRequest) -> dict:
         persisted_event = False
         if payload.persist_event_on_action and moderation_service.should_persist_event(result["decision"]):
             event = moderation_service.build_event(result, source=item.source, page_url=item.page_url)
-            repo.save_moderation_event(event)
-            persisted_event = True
+            persisted_event = repo.save_moderation_event(event, dedupe_window_seconds=30)
 
         result["persisted_event"] = persisted_event
         results.append(result)

@@ -15,7 +15,7 @@ class TestToxicityAnalyzer(unittest.TestCase):
 
     def setUp(self):
         # Create a base config
-        self.config = AnalysisConfig()
+        self.config = AnalysisConfig(scoring_mode="dictionary_first_fallback")
         
     def _create_message(self, content: str) -> Message:
         return Message(
@@ -160,6 +160,57 @@ class TestToxicityAnalyzer(unittest.TestCase):
                 self.assertEqual(results[0][1]["scoring_method"], "huggingface_context_guard")
                 self.assertEqual(results[1][0], 0.92)
                 self.assertEqual(results[1][1]["scoring_method"], "huggingface")
+
+    def test_hybrid_model_priority_runs_hf_even_on_high_dict_score(self):
+        config = AnalysisConfig(
+            use_hf_model=True,
+            scoring_mode="hybrid_model_priority",
+            hybrid_dictionary_weight=0.85,
+        )
+        with patch.object(HFToxicityModel, "_load_pipeline", return_value=None):
+            with patch.object(HFToxicityModel, "predict_single", return_value=0.2) as mock_predict:
+                analyzer = ToxicityAnalyzer(config)
+                analyzer.hf_model.is_loaded = True
+
+                msg = self._create_message("just kys")
+                score, metadata = analyzer.analyze_message(msg)
+
+                mock_predict.assert_called_once_with("just kys")
+                self.assertEqual(metadata["scoring_method"], "hybrid_model_priority")
+                self.assertAlmostEqual(metadata["dict_score"], 1.0)
+                self.assertAlmostEqual(metadata["weighted_dict_score"], 0.85)
+                self.assertAlmostEqual(score, 0.85)
+
+    def test_hybrid_model_priority_uses_formula_max_hf_vs_weighted_dict(self):
+        config = AnalysisConfig(
+            use_hf_model=True,
+            scoring_mode="hybrid_model_priority",
+            hybrid_dictionary_weight=0.85,
+        )
+        with patch.object(HFToxicityModel, "_load_pipeline", return_value=None):
+            with patch.object(HFToxicityModel, "predict_single", return_value=0.92):
+                analyzer = ToxicityAnalyzer(config)
+                analyzer.hf_model.is_loaded = True
+
+                msg = self._create_message("you are an idiot")
+                score, metadata = analyzer.analyze_message(msg)
+
+                self.assertAlmostEqual(metadata["dict_score"], 0.5)
+                self.assertAlmostEqual(metadata["weighted_dict_score"], 0.425)
+                self.assertAlmostEqual(score, 0.92)
+                self.assertIn("idiot", metadata["matched_terms"])
+
+    def test_dictionary_phrase_matches_through_punctuation_and_whitespace(self):
+        self.config.use_hf_model = False
+        analyzer = ToxicityAnalyzer(self.config)
+
+        msg = self._create_message("Please... kill   yourself!!!")
+        score, metadata = analyzer.analyze_message(msg)
+
+        self.assertGreaterEqual(score, 1.0)
+        self.assertIn("kill yourself", metadata["matched_phrases"])
+        self.assertTrue(len(metadata["matched_phrase_spans"]) >= 1)
+        self.assertEqual(metadata["matched_phrase_spans"][0]["phrase"], "kill yourself")
 
 if __name__ == '__main__':
     unittest.main()

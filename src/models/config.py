@@ -23,6 +23,11 @@ class AnalysisConfig:
     custom_toxic_phrases: dict[str, float] = field(default_factory=dict)
 
     # --- Machine Learning Extensions ---
+    # Scoring strategy:
+    # - "hybrid_model_priority": default, always evaluate HF when available and blend with dictionary signal.
+    # - "dictionary_first_fallback": legacy behavior, use HF only when dictionary score is below fallback threshold.
+    scoring_mode: str = "hybrid_model_priority"
+    hybrid_dictionary_weight: float = 0.85
     use_hf_model: bool = True
     hf_model_name: str = "unitary/toxic-bert"
     hf_fallback_threshold: float = 0.8  # Use HF if dict score < this threshold

@@ -13,7 +13,7 @@ from src.models.user import User
 from src.models.message import Message
 from src.models.alert import Alert, AlertSeverity
 from src.models.moderation_event import ModerationEvent
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 class DatabaseRepository:
@@ -39,6 +39,11 @@ class DatabaseRepository:
         message_columns = {row[1] for row in cursor.fetchall()}
         if "metadata" not in message_columns:
             cursor.execute("ALTER TABLE messages ADD COLUMN metadata TEXT")
+
+        cursor.execute("PRAGMA table_info(moderation_events)")
+        moderation_event_columns = {row[1] for row in cursor.fetchall()}
+        if moderation_event_columns and "event_hash" not in moderation_event_columns:
+            cursor.execute("ALTER TABLE moderation_events ADD COLUMN event_hash TEXT")
 
     def clear_all_data(self):
         # wipes all tables for a fresh analysis run
@@ -86,14 +91,38 @@ class DatabaseRepository:
             ))
             conn.commit()
 
-    def save_moderation_event(self, event: ModerationEvent):
+    def save_moderation_event(self, event: ModerationEvent, dedupe_window_seconds: int = 30) -> bool:
         with self._get_connection() as conn:
             cursor = conn.cursor()
+            if event.event_hash:
+                cursor.execute(
+                    """
+                    SELECT timestamp
+                    FROM moderation_events
+                    WHERE event_hash = ?
+                    ORDER BY timestamp DESC
+                    LIMIT 1
+                    """,
+                    (event.event_hash,),
+                )
+                existing = cursor.fetchone()
+                if existing:
+                    existing_ts = datetime.fromisoformat(str(existing[0]).replace("Z", "+00:00"))
+                    if existing_ts.tzinfo is None:
+                        existing_ts = existing_ts.replace(tzinfo=timezone.utc)
+
+                    event_ts = event.timestamp
+                    if event_ts.tzinfo is None:
+                        event_ts = event_ts.replace(tzinfo=timezone.utc)
+
+                    if (event_ts - existing_ts).total_seconds() <= dedupe_window_seconds:
+                        return False
+
             cursor.execute(
                 """
                 INSERT OR REPLACE INTO moderation_events
-                (id, timestamp, source, page_url, page_domain, snippet, toxicity_score, severity, decision, detection_method, explanation)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (id, timestamp, source, page_url, page_domain, snippet, toxicity_score, severity, decision, detection_method, explanation, event_hash)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     event.id,
@@ -107,9 +136,11 @@ class DatabaseRepository:
                     event.decision,
                     event.detection_method,
                     event.explanation,
+                    event.event_hash,
                 ),
             )
             conn.commit()
+            return True
 
     # ── Dashboard queries ───────────────────────────────────────────────────
 

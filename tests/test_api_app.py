@@ -72,6 +72,22 @@ class TestSafeNetApi(unittest.TestCase):
         self.assertFalse(payload["persisted_event"])
         self.assertEqual(len(self.repo.get_moderation_events()), 0)
 
+    def test_text_analysis_dedupes_same_event_in_window(self):
+        payload = {
+            "text": "kys",
+            "source": "extension",
+            "page_url": "https://example.com/post/1",
+            "persist_event_on_action": True,
+        }
+        first = self.client.post("/v1/analyze/text", json=payload)
+        second = self.client.post("/v1/analyze/text", json=payload)
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertTrue(first.json()["persisted_event"])
+        self.assertFalse(second.json()["persisted_event"])
+        self.assertEqual(len(self.repo.get_moderation_events()), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

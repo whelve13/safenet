@@ -16,4 +16,5 @@ class ModerationEvent:
     explanation: str
     page_url: Optional[str] = None
     page_domain: Optional[str] = None
+    event_hash: Optional[str] = None
 

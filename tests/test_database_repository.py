@@ -97,12 +97,64 @@ class TestDatabaseRepositoryMigrations(unittest.TestCase):
             detection_method="hybrid",
             explanation="Toxic-BERT fallback increased confidence because dictionary score was below threshold.",
         )
-        repo.save_moderation_event(event)
+        saved = repo.save_moderation_event(event)
+        self.assertTrue(saved)
 
         rows = repo.get_moderation_events(limit=5)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0][2], "extension")
         self.assertEqual(rows[0][8], "block")
+
+    def test_deduplicates_moderation_event_with_same_hash_within_window(self):
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp_db:
+            db_path = tmp_db.name
+
+        def cleanup_db():
+            for _ in range(10):
+                try:
+                    if os.path.exists(db_path):
+                        os.remove(db_path)
+                    return
+                except PermissionError:
+                    time.sleep(0.1)
+
+        self.addCleanup(cleanup_db)
+
+        repo = DatabaseRepository(db_path)
+        event_1 = ModerationEvent(
+            id="EVT-1",
+            timestamp=datetime.now(),
+            source="extension",
+            page_url="https://example.com/chat",
+            page_domain="example.com",
+            snippet="you are worthless",
+            toxicity_score=0.91,
+            severity="critical",
+            decision="block",
+            detection_method="hybrid",
+            explanation="Hybrid model-priority mode used.",
+            event_hash="abc123",
+        )
+        event_2 = ModerationEvent(
+            id="EVT-2",
+            timestamp=datetime.now(),
+            source="extension",
+            page_url="https://example.com/chat",
+            page_domain="example.com",
+            snippet="you are worthless",
+            toxicity_score=0.92,
+            severity="critical",
+            decision="block",
+            detection_method="hybrid",
+            explanation="Hybrid model-priority mode used.",
+            event_hash="abc123",
+        )
+
+        first_saved = repo.save_moderation_event(event_1, dedupe_window_seconds=30)
+        second_saved = repo.save_moderation_event(event_2, dedupe_window_seconds=30)
+        self.assertTrue(first_saved)
+        self.assertFalse(second_saved)
+        self.assertEqual(len(repo.get_moderation_events(limit=10)), 1)
 
 
 if __name__ == "__main__":

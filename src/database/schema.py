@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS moderation_events (
     severity TEXT NOT NULL,
     decision TEXT NOT NULL,
     detection_method TEXT NOT NULL,
-    explanation TEXT
+    explanation TEXT,
+    event_hash TEXT
 );
 """
 
