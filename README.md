@@ -5,7 +5,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-powered-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-dashboard-FF4B4B?logo=streamlit&logoColor=white)](https://streamlit.io/)
 [![Last Commit](https://img.shields.io/github/last-commit/whelve13/safenet)](https://github.com/whelve13/safenet/commits)
-[![License](https://img.shields.io/badge/license-not%20specified-lightgrey)](#)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A Python-based tool for detecting and reporting online harassment and toxic behavior in chat logs and live browser content. SafeNet now supports:
 - manual chat-log analysis (CLI + Streamlit dashboard)
